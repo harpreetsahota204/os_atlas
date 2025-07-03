@@ -11,7 +11,7 @@ import torch
 import fiftyone as fo
 from fiftyone import Model, SamplesMixin
 
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from transformers.utils import is_flash_attn_2_available
 
 from qwen_vl_utils import process_vision_info
@@ -159,6 +159,10 @@ Always return your actions as valid JSON wrapped in ```json blocks, following th
 Note: Include only parameters relevant to your chosen action. Keep thoughts in English and summarize your plan with the target element in one sentence.
 """
 
+MIN_PIXELS = 256*28*28
+MAX_PIXELS = 1024*28*28
+
+
 OPERATIONS = {
     "detect": DEFAULT_DETECTION_SYSTEM_PROMPT,
     "point": DEFAULT_KEYPOINT_SYSTEM_PROMPT,
@@ -206,7 +210,7 @@ class OSAtlasModel(SamplesMixin, Model):
         if is_flash_attn_2_available():
             model_kwargs["attn_implementation"] = "flash_attention_2"
 
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
             model_path,
             trust_remote_code=True,
             **model_kwargs
@@ -215,7 +219,11 @@ class OSAtlasModel(SamplesMixin, Model):
         self.processor = AutoProcessor.from_pretrained(
             model_path,
             trust_remote_code=True,
-            use_fast=True
+            use_fast=True,
+            size={
+            'shortest_edge': MIN_PIXELS,  # Minimum dimension
+            'longest_edge': MAX_PIXELS    # Maximum dimension
+            }
         )
 
         self.model.eval()
