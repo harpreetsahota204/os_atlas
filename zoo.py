@@ -366,12 +366,20 @@ class OSAtlasModel(SamplesMixin, Model):
                 if not bbox:
                     continue
                     
-                # Convert pixel coordinates to normalized [0,1] coordinates
-                x1, y1, x2, y2 = map(float, bbox)
-                x = x1 / image_width  # Left coordinate
-                y = y1 / image_height  # Top coordinate
-                w = (x2 - x1) / image_width  # Width
-                h = (y2 - y1) / image_height  # Height
+                # Convert coordinates to float
+                x1_norm, y1_norm, x2_norm, y2_norm = map(float, bbox)
+                
+                # Convert from 0-1000 range to pixel coordinates
+                x1_pixel = (x1_norm / 1000.0) * image_width
+                y1_pixel = (y1_norm / 1000.0) * image_height
+                x2_pixel = (x2_norm / 1000.0) * image_width
+                y2_pixel = (y2_norm / 1000.0) * image_height
+                
+                # Convert to FiftyOne's relative [0,1] format: [top-left-x, top-left-y, width, height]
+                x = x1_pixel / image_width  # Left coordinate (0-1)
+                y = y1_pixel / image_height  # Top coordinate (0-1)
+                w = (x2_pixel - x1_pixel) / image_width  # Width (0-1)
+                h = (y2_pixel - y1_pixel) / image_height  # Height (0-1)
                 
                 # Create FiftyOne Detection object
                 detection = fo.Detection(
@@ -433,12 +441,20 @@ class OSAtlasModel(SamplesMixin, Model):
                 if not text:
                     continue
                     
-                # Convert pixel coordinates to normalized [0,1] coordinates
-                x1, y1, x2, y2 = map(float, bbox)
-                x = x1 / image_width  # Left coordinate
-                y = y1 / image_height  # Top coordinate
-                w = (x2 - x1) / image_width  # Width
-                h = (y2 - y1) / image_height  # Height
+                # Convert coordinates to float
+                x1_norm, y1_norm, x2_norm, y2_norm = map(float, bbox)
+                
+                # Convert from 0-1000 range to pixel coordinates
+                x1_pixel = (x1_norm / 1000.0) * image_width
+                y1_pixel = (y1_norm / 1000.0) * image_height
+                x2_pixel = (x2_norm / 1000.0) * image_width
+                y2_pixel = (y2_norm / 1000.0) * image_height
+                
+                # Convert to FiftyOne's relative [0,1] format: [top-left-x, top-left-y, width, height]
+                x = x1_pixel / image_width  # Left coordinate (0-1)
+                y = y1_pixel / image_height  # Top coordinate (0-1)
+                w = (x2_pixel - x1_pixel) / image_width  # Width (0-1)
+                h = (y2_pixel - y1_pixel) / image_height  # Height (0-1)
                 
                 # Create FiftyOne Detection object
                 detection = fo.Detection(
@@ -485,28 +501,38 @@ class OSAtlasModel(SamplesMixin, Model):
                 # Process coordinates based on action type
                 if action_type == "drag" and isinstance(point_2d, list):
                     # For drag, point_2d is a list of two points [(x1,y1), (x2,y2)]
-                    start_x, start_y = map(float, point_2d[0])
-                    end_x, end_y = map(float, point_2d[1])
+                    start_x_norm, start_y_norm = map(float, point_2d[0])
+                    end_x_norm, end_y_norm = map(float, point_2d[1])
                     
-                    # Normalize coordinates
-                    point = [start_x / image_width, start_y / image_height]
+                    # Convert from 0-1000 range to pixel coordinates
+                    start_x_pixel = (start_x_norm / 1000.0) * image_width
+                    start_y_pixel = (start_y_norm / 1000.0) * image_height
+                    end_x_pixel = (end_x_norm / 1000.0) * image_width
+                    end_y_pixel = (end_y_norm / 1000.0) * image_height
+                    
+                    # Convert to FiftyOne's relative [0,1] format
+                    point = [start_x_pixel / image_width, start_y_pixel / image_height]
                     
                     # Create metadata with end point and other fields
                     metadata = {
                         "sequence_idx": idx,
                         "action": action_type,
                         "thought": thought,
-                        "end_point": [end_x / image_width, end_y / image_height]
+                        "end_point": [end_x_pixel / image_width, end_y_pixel / image_height]
                     }
                 else:
                     # For all other actions, point_2d is a single point (x,y)
                     if isinstance(point_2d, list):
-                        x, y = map(float, point_2d[0])
+                        x_norm, y_norm = map(float, point_2d[0])
                     else:
-                        x, y = map(float, point_2d)
+                        x_norm, y_norm = map(float, point_2d)
                     
-                    # Normalize coordinates
-                    point = [x / image_width, y / image_height]
+                    # Convert from 0-1000 range to pixel coordinates
+                    x_pixel = (x_norm / 1000.0) * image_width
+                    y_pixel = (y_norm / 1000.0) * image_height
+                    
+                    # Convert to FiftyOne's relative [0,1] format
+                    point = [x_pixel / image_width, y_pixel / image_height]
                     
                     # Base metadata with sequence index, action type and thought
                     metadata = {
@@ -572,16 +598,20 @@ class OSAtlasModel(SamplesMixin, Model):
         # Process each keypoint
         for point in points:
             try:
-                # Extract and normalize coordinates
-                x, y = point["point_2d"]
+                # Extract coordinates
+                x_norm, y_norm = point["point_2d"]
                 # Handle tensor inputs if present
-                x = float(x.cpu() if torch.is_tensor(x) else x)
-                y = float(y.cpu() if torch.is_tensor(y) else y)
+                x_norm = float(x_norm.cpu() if torch.is_tensor(x_norm) else x_norm)
+                y_norm = float(y_norm.cpu() if torch.is_tensor(y_norm) else y_norm)
                 
-                # Normalize coordinates to [0,1] range
+                # Convert from 0-1000 range to pixel coordinates
+                x_pixel = (x_norm / 1000.0) * image_width
+                y_pixel = (y_norm / 1000.0) * image_height
+                
+                # Convert to FiftyOne's relative [0,1] format
                 normalized_point = [
-                    x / image_width,
-                    y / image_height
+                    x_pixel / image_width,
+                    y_pixel / image_height
                 ]
                 
                 # Create FiftyOne Keypoint object
@@ -664,6 +694,8 @@ class OSAtlasModel(SamplesMixin, Model):
         if not prompt:
             raise ValueError("No prompt provided.")
         
+        input_width, input_height = image.size
+        
         messages = [
             {
                 "role": "system", 
@@ -708,9 +740,6 @@ class OSAtlasModel(SamplesMixin, Model):
         generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, output_ids)]
         output_text = self.processor.batch_decode(generated_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True)[0]
 
-        # Get image dimensions and convert to float
-        input_height = float(inputs['image_grid_thw'][0][1].cpu() * 14)
-        input_width = float(inputs['image_grid_thw'][0][2].cpu() * 14)
 
         # For VQA, return the raw text output
         if self.operation == "vqa":
