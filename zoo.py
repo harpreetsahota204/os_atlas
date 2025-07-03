@@ -465,15 +465,12 @@ class OSAtlasModel(SamplesMixin, Model):
         keypoints = []
         
         # Handle nested dictionary structures
-        if isinstance(points, dict):
-            points = points.get("keypoints", points)
-            if isinstance(points, dict):
-                points = next((v for v in points.values() if isinstance(v, list)), points)
+        if isinstance(actions, dict):
+            actions = actions.get("keypoints", actions)
+            if isinstance(actions, dict):
+                actions = next((v for v in actions.values() if isinstance(v, list)), actions)
         
-        
-        # Ensure actions is a list
-        actions = actions if isinstance(actions, list) else [actions]
-        
+        # Process each keypoint
         for idx, kp in enumerate(actions):
             try:
                 # Extract the point coordinates
@@ -709,7 +706,7 @@ class OSAtlasModel(SamplesMixin, Model):
         with torch.no_grad():
             output_ids = self.model.generate(**inputs, max_new_tokens=8192)
         generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, output_ids)]
-        output_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
+        output_text = self.processor.batch_decode(generated_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True)[0]
 
         # Get image dimensions and convert to float
         input_height = float(inputs['image_grid_thw'][0][1].cpu() * 14)
