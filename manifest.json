@@ -3,32 +3,6 @@
     "url": "",
     "models": [
         {
-            "base_name": "OS-Copilot/OS-Atlas-Base-4B",
-            "base_filename":"OS-Atlas-Base-4B",
-            "author": "OS-Copilot",
-            "license": "Apache 2.0",
-            "source": "https://huggingface.co/OS-Copilot/OS-Atlas-Base-4B",
-            "description": "OS-Atlas provides a series of models specifically designed for GUI agents.",
-            "tags": [
-                "detection",
-                "ocr",
-                "VLM",
-                "classification",
-                "zero-shot",
-                "visual-agent"
-            ],
-            "date_added": "2025-07-03",
-            "requirements": {
-                "packages": ["huggingface-hub","transformers", "torch", "torchvision", "qwen-vl-utils", "accelerate"],
-                "cpu": {
-                    "support": true
-                },
-                "gpu": {
-                    "support": true
-                }
-            }
-        },
-        {
             "base_name": "OS-Copilot/OS-Atlas-Base-7B",
             "base_filename":"OS-Atlas-Base-7B",
             "author": "OS-Copilot",
