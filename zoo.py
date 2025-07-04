@@ -283,6 +283,8 @@ class OSAtlasModel(SamplesMixin, Model):
             Complete JSON if valid, otherwise dict with the detected array key
             containing any complete objects found before truncation.
         """
+        # Clean common special tokens first
+        s = re.sub(r'<\|[^|]*\|>', '', s).strip()
         # Extract JSON from markdown blocks
         if "```json" in s:
             s = s.split("```json")[1].split("```")[0].strip()
