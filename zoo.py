@@ -380,7 +380,7 @@ class OSAtlasModel(SamplesMixin, Model):
             elif len(numbers) == 2:
                 # Treat as center point
                 x, y = map(float, numbers)
-                return (x, y, x + 1, y + 1)
+                return (x, y, x + 0.10*x, y + 0.10*y)
                 
         except (ValueError, TypeError) as e:
             logger.debug(f"Error processing bbox {bbox}: {e}")
