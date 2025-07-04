@@ -3,7 +3,7 @@ import os
 import logging
 import json
 from PIL import Image
-from typing import Dict, Any, List, Union, Optional
+from typing import List, Tuple, Dict, Any, List, Union, Optional
 import re
 import numpy as np
 import torch
@@ -328,333 +328,386 @@ class OSAtlasModel(SamplesMixin, Model):
         # Return recovered objects with original key structure
         return {array_key: objects}
 
-    def _to_detections(self, boxes: List[Dict], image_width: int, image_height: int) -> fo.Detections:
-        """Convert bounding boxes to FiftyOne Detections.
+    def _extract_list_from_data(self, data: Union[Dict, List, Any], key: str) -> List[Any]:
+        """Extract list from various nested data structures.
         
-        Takes detection results and converts them to FiftyOne's format, including:
-        - Coordinate normalization
-        - Label extraction
+        This helper method handles different JSON structures that might be returned by the model,
+        ensuring we always get a list of items regardless of the nesting structure.
         
         Args:
-            boxes: Detection results, either:
-                - List of detection dictionaries
-                - Dictionary containing 'data'
-            image_width: Original image width in pixels
-            image_height: Original image height in pixels
+            data: The parsed data structure, which could be a dict, list, or other type
+            key: The expected key name for the list in the dictionary (e.g., "detections")
+            
+        Returns:
+            A list of items, either directly extracted or wrapped in a list if a single item
+        """
+        if isinstance(data, dict):
+            # First try to get the list using the provided key
+            data = data.get(key, data)
+            if isinstance(data, dict):
+                # If still a dict, look for the first list value in any of its keys
+                # This handles cases where the model returns {"data": {"detections": [...]}}
+                data = next((v for v in data.values() if isinstance(v, list)), data)
+        
+        # Ensure we always return a list, even if we found a single item
+        return data if isinstance(data, list) else [data]
+
+    def _parse_bbox_coords(self, bbox: Union[List, Tuple, str, Any]) -> Optional[Tuple[float, float, float, float]]:
+        """Parse bounding box coordinates from various formats.
+        
+        Args:
+            bbox: Bounding box coordinates in various possible formats:
+                - List/tuple of 4 numbers [x1, y1, x2, y2]
+                - String representation like "(x1,y1),(x2,y2)" or "x1 y1 x2 y2"
+                - Other formats that can be converted to 4 coordinates
         
         Returns:
-            fo.Detections: FiftyOne Detections object containing all converted detections
+            Tuple of (x1, y1, x2, y2) as floats, or None if parsing fails
+        """
+        try:
+            # Case 1: If it's already a list/tuple with 4 elements, use it directly
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                return tuple(map(float, bbox))
+            
+            # Case 2: For strings or other formats, extract all numbers and take the first 4
+            numbers = re.findall(r'-?\d+(?:\.\d+)?', str(bbox))
+            if len(numbers) >= 4:
+                return tuple(map(float, numbers[:4]))
+                
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Error processing bbox {bbox}: {e}")
+            
+        return None
+
+    def _parse_point_coords(self, point: Union[List, Tuple, str, Any]) -> Optional[Tuple[float, float]]:
+        """Parse point coordinates from various formats.
+        
+        Args:
+            point: Point coordinates in various possible formats:
+                - List/tuple of 2 numbers [x, y]
+                - String representation like "(x,y)" or "x y"
+                - Other formats that can be converted to 2 coordinates
+        
+        Returns:
+            Tuple of (x, y) as floats, or None if parsing fails
+        """
+        try:
+            # Case 1: If it's already a list/tuple with 2 elements, use it directly
+            if isinstance(point, (list, tuple)) and len(point) == 2:
+                return tuple(map(float, point))
+            
+            # Case 2: For strings or other formats, extract all numbers and take the first 2
+            numbers = re.findall(r'-?\d+(?:\.\d+)?', str(point))
+            if len(numbers) >= 2:
+                return tuple(map(float, numbers[:2]))
+                
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Error processing point {point}: {e}")
+            
+        return None
+
+    def _convert_bbox_to_fiftyone(self, bbox: Any) -> Optional[List[float]]:
+        """Convert bbox coordinates to FiftyOne format.
+        
+        Converts from model's 0-1000 normalized coordinates to FiftyOne's 0-1 format.
+        Model outputs: [x1, y1, x2, y2] in 0-1000 range (top-left, bottom-right)
+        FiftyOne expects: [top-left-x, top-left-y, width, height] in 0-1 range
+        
+        Args:
+            bbox: Bounding box coordinates in 0-1000 range
+            
+        Returns:
+            List of [x, y, width, height] in 0-1 range for FiftyOne, or None if invalid
+        """
+        coords = self._parse_bbox_coords(bbox)
+        if not coords or len(coords) != 4:
+            return None
+            
+        x1_norm, y1_norm, x2_norm, y2_norm = coords
+        
+        # Convert from 0-1000 range to 0-1 range for FiftyOne
+        x = x1_norm / 1000.0  # Left coordinate (0-1)
+        y = y1_norm / 1000.0  # Top coordinate (0-1)
+        w = (x2_norm - x1_norm) / 1000.0  # Width (0-1)
+        h = (y2_norm - y1_norm) / 1000.0  # Height (0-1)
+        
+        return [x, y, w, h]
+
+    def _convert_point_to_fiftyone(self, point: Any) -> Optional[List[float]]:
+        """Convert point coordinates to FiftyOne format.
+        
+        Converts from model's 0-1000 normalized coordinates to FiftyOne's 0-1 format.
+        
+        Args:
+            point: Point coordinates in 0-1000 range
+            
+        Returns:
+            List of [x, y] in 0-1 range for FiftyOne, or None if invalid
+        """
+        coords = self._parse_point_coords(point)
+        if not coords or len(coords) != 2:
+            return None
+            
+        x_norm, y_norm = coords
+        
+        # Convert from 0-1000 range to 0-1 range for FiftyOne
+        x = x_norm / 1000.0  # X coordinate (0-1)
+        y = y_norm / 1000.0  # Y coordinate (0-1)
+        
+        return [x, y]
+
+    def _to_detections(self, boxes: List[Dict]) -> fo.Detections:
+        """Convert bounding boxes to FiftyOne Detections.
+        
+        Takes the raw model output containing bounding box information and converts
+        it to FiftyOne's Detection objects that can be visualized in the UI.
+        
+        Args:
+            boxes: List of dictionaries containing detection information with 'bbox' and 'label' keys
+            
+        Returns:
+            fo.Detections: A FiftyOne Detections object containing all valid detections
         """
         detections = []
+        # Extract the 'detections' list from the model output if nested in a container
+        boxes = self._extract_list_from_data(boxes, "detections")
         
-        # Handle nested dictionary structures
-        if isinstance(boxes, dict):
-            # Try to get data field, fall back to original dict if not found
-            boxes = boxes.get("detections", boxes)
-            if isinstance(boxes, dict):
-                # If still a dict, try to find first list value
-                boxes = next((v for v in boxes.values() if isinstance(v, list)), boxes)
-        
-        # Ensure we're working with a list of boxes
-        boxes = boxes if isinstance(boxes, list) else [boxes]
-        
-        # Process each bounding box
         for box in boxes:
             try:
-                # Extract bbox coordinates, checking both possible keys
-                bbox = box.get('bbox', box.get('bbox_2d', None))
+                # Get bbox coordinates - try both 'bbox' and 'bbox_2d' keys for flexibility
+                bbox = box.get('bbox', box.get('bbox_2d'))
                 if not bbox:
+                    # Skip entries without bounding box information
                     continue
                     
-                # Convert coordinates to float
-                x1_norm, y1_norm, x2_norm, y2_norm = map(float, bbox)
+                # Convert from model's coordinate system to FiftyOne's expected format
+                fiftyone_bbox = self._convert_bbox_to_fiftyone(bbox)
+                if not fiftyone_bbox:
+                    # Log and skip if conversion failed (invalid coordinates)
+                    logger.debug(f"Invalid bbox format: {bbox}")
+                    continue
                 
-                # Convert from 0-1000 range to pixel coordinates
-                x1_pixel = (x1_norm / 1000.0) * image_width
-                y1_pixel = (y1_norm / 1000.0) * image_height
-                x2_pixel = (x2_norm / 1000.0) * image_width
-                y2_pixel = (y2_norm / 1000.0) * image_height
-                
-                # Convert to FiftyOne's relative [0,1] format: [top-left-x, top-left-y, width, height]
-                x = x1_pixel / image_width  # Left coordinate (0-1)
-                y = y1_pixel / image_height  # Top coordinate (0-1)
-                w = (x2_pixel - x1_pixel) / image_width  # Width (0-1)
-                h = (y2_pixel - y1_pixel) / image_height  # Height (0-1)
-                
-                # Create FiftyOne Detection object
+                # Create a FiftyOne Detection object with the converted coordinates
+                # Default to "object" label if none provided
                 detection = fo.Detection(
                     label=str(box.get("label", "object")),
-                    bounding_box=[x, y, w, h]
+                    bounding_box=fiftyone_bbox
                 )
                 detections.append(detection)
                     
             except Exception as e:
+                # Catch and log any errors during processing of individual boxes
                 logger.debug(f"Error processing box {box}: {e}")
                 continue
                     
+        # Return a FiftyOne Detections object containing all valid detections
         return fo.Detections(detections=detections)
-
-    def _to_ocr_detections(self, boxes: List[Dict], image_width: int, image_height: int) -> fo.Detections:
+    
+    def _to_ocr_detections(self, boxes: List[Dict]) -> fo.Detections:
         """Convert OCR results to FiftyOne Detections.
         
-        Takes OCR detection results and converts them to FiftyOne's format, including:
-        - Coordinate normalization
-        - Text content preservation
-        - Text type categorization
+        Takes the raw model output containing OCR text detection information and converts
+        it to FiftyOne's Detection objects that can be visualized in the UI.
         
         Args:
-            boxes: OCR detection results, either:
-                - List of OCR dictionaries
-                - Dictionary containing 'data'
-            image_width: Original image width in pixels
-            image_height: Original image height in pixels
-        
+            boxes: List of dictionaries containing OCR detection information with 'bbox', 
+                  'text', and optionally 'text_type' keys
+            
         Returns:
-            fo.Detections: FiftyOne Detections object containing all converted OCR detections
+            fo.Detections: A FiftyOne Detections object containing all valid OCR text detections
         """
         detections = []
+        # Extract the 'text_detections' list from the model output if nested in a container
+        boxes = self._extract_list_from_data(boxes, "text_detections")
         
-        # Handle nested dictionary structures
-        if isinstance(boxes, dict):
-            # Try to get data field, fall back to original dict if not found
-            boxes = boxes.get("text_detections", boxes)
-            if isinstance(boxes, dict):
-                # If still a dict, try to find first list value (usually "text_detections")
-                boxes = next((v for v in boxes.values() if isinstance(v, list)), boxes)
-        
-        # Ensure boxes is a list, even for single box input
-        boxes = boxes if isinstance(boxes, list) else [boxes]
-        
-        # Process each OCR box
         for box in boxes:
             try:
-                # Extract bbox coordinates, checking both possible keys
-                bbox = box.get('bbox', box.get('bbox_2d', None))
-                if not bbox:
-                    continue
-                    
-                # Extract text content and type
+                # Get bbox and text content - try both possible key names for flexibility
+                bbox = box.get('bbox', box.get('bbox_2d'))
                 text = box.get('text')
-                text_type = box.get('text_type', 'text')  # Default to 'text' if not specified
-                
-                # Skip if no text content
-                if not text:
+                # Skip entries without both bounding box and text content
+                if not bbox or not text:
                     continue
                     
-                # Convert coordinates to float
-                x1_norm, y1_norm, x2_norm, y2_norm = map(float, bbox)
+                # Convert from model's coordinate system to FiftyOne's expected format
+                fiftyone_bbox = self._convert_bbox_to_fiftyone(bbox)
+                if not fiftyone_bbox:
+                    # Log and skip if conversion failed (invalid coordinates)
+                    logger.debug(f"Invalid bbox format: {bbox}")
+                    continue
                 
-                # Convert from 0-1000 range to pixel coordinates
-                x1_pixel = (x1_norm / 1000.0) * image_width
-                y1_pixel = (y1_norm / 1000.0) * image_height
-                x2_pixel = (x2_norm / 1000.0) * image_width
-                y2_pixel = (y2_norm / 1000.0) * image_height
-                
-                # Convert to FiftyOne's relative [0,1] format: [top-left-x, top-left-y, width, height]
-                x = x1_pixel / image_width  # Left coordinate (0-1)
-                y = y1_pixel / image_height  # Top coordinate (0-1)
-                w = (x2_pixel - x1_pixel) / image_width  # Width (0-1)
-                h = (y2_pixel - y1_pixel) / image_height  # Height (0-1)
-                
-                # Create FiftyOne Detection object
+                # Create a FiftyOne Detection object with the converted coordinates
+                # Use 'text_type' as label if provided, otherwise default to "text"
                 detection = fo.Detection(
-                    label=str(text_type),
-                    bounding_box=[x, y, w, h],
-                    text=str(text)
+                    label=str(box.get('text_type', 'text')),
+                    bounding_box=fiftyone_bbox,
+                    text=str(text)  # Store the actual OCR text content
                 )
                 detections.append(detection)
                     
             except Exception as e:
+                # Catch and log any errors during processing of individual OCR boxes
                 logger.debug(f"Error processing OCR box {box}: {e}")
                 continue
                     
+        # Return a FiftyOne Detections object containing all valid OCR text detections
         return fo.Detections(detections=detections)
-    
-    def _to_agentic_keypoints(self, actions: Dict, image_width: int, image_height: int) -> fo.Keypoints:
-        """Convert agentic actions to FiftyOne Keypoints.
-        
-        Args:
-            actions: Dictionary containing keypoints with point_2d, action type, and additional parameters
-            image_width: Original image width in pixels
-            image_height: Original image height in pixels
-        """
-        keypoints = []
-        
-        # Handle nested dictionary structures
-        if isinstance(actions, dict):
-            actions = actions.get("keypoints", actions)
-            if isinstance(actions, dict):
-                actions = next((v for v in actions.values() if isinstance(v, list)), actions)
-        
-        # Process each keypoint
-        for idx, kp in enumerate(actions):
-            try:
-                # Extract the point coordinates
-                point_2d = kp.get("point_2d")
-                if not point_2d:
-                    continue
-                    
-                # Extract thought and action
-                thought = kp.get("thought", "")
-                action_type = kp.get("action", "")
-                
-                # Process coordinates based on action type
-                if action_type == "drag" and isinstance(point_2d, list):
-                    # For drag, point_2d is a list of two points [(x1,y1), (x2,y2)]
-                    start_x_norm, start_y_norm = map(float, point_2d[0])
-                    end_x_norm, end_y_norm = map(float, point_2d[1])
-                    
-                    # Convert from 0-1000 range to pixel coordinates
-                    start_x_pixel = (start_x_norm / 1000.0) * image_width
-                    start_y_pixel = (start_y_norm / 1000.0) * image_height
-                    end_x_pixel = (end_x_norm / 1000.0) * image_width
-                    end_y_pixel = (end_y_norm / 1000.0) * image_height
-                    
-                    # Convert to FiftyOne's relative [0,1] format
-                    point = [start_x_pixel / image_width, start_y_pixel / image_height]
-                    
-                    # Create metadata with end point and other fields
-                    metadata = {
-                        "sequence_idx": idx,
-                        "action": action_type,
-                        "thought": thought,
-                        "end_point": [end_x_pixel / image_width, end_y_pixel / image_height]
-                    }
-                else:
-                    # For all other actions, point_2d is a single point (x,y)
-                    if isinstance(point_2d, list):
-                        x_norm, y_norm = map(float, point_2d[0])
-                    else:
-                        x_norm, y_norm = map(float, point_2d)
-                    
-                    # Convert from 0-1000 range to pixel coordinates
-                    x_pixel = (x_norm / 1000.0) * image_width
-                    y_pixel = (y_norm / 1000.0) * image_height
-                    
-                    # Convert to FiftyOne's relative [0,1] format
-                    point = [x_pixel / image_width, y_pixel / image_height]
-                    
-                    # Base metadata with sequence index, action type and thought
-                    metadata = {
-                        "sequence_idx": idx,
-                        "action": action_type,
-                        "thought": thought
-                    }
-                    
-                    # Add action-specific parameters
-                    if action_type == "type":
-                        metadata["content"] = kp.get("content", "")
-                        
-                    elif action_type == "finished":
-                        metadata["content"] = kp.get("content", "")
-                        
-                    elif action_type == "scroll":
-                        metadata["direction"] = kp.get("direction", "down")
-                        
-                    elif action_type == "hotkey":
-                        metadata["key"] = kp.get("key", "")
-                        
-                    elif action_type == "open_app":
-                        metadata["app_name"] = kp.get("app_name", "")
-                
-                # Create FiftyOne Keypoint object
-                keypoint = fo.Keypoint(
-                    label=action_type,
-                    points=[point],
-                    metadata=metadata
-                )
-                keypoints.append(keypoint)
-                    
-            except Exception as e:
-                logger.debug(f"Error processing keypoint {kp}: {e}")
-                continue
-                    
-        return fo.Keypoints(keypoints=keypoints)
 
-    def _to_keypoints(self, points: List[Dict], image_width: int, image_height: int) -> fo.Keypoints:
+    def _to_keypoints(self, points: List[Dict]) -> fo.Keypoints:
         """Convert keypoint detections to FiftyOne Keypoints.
         
-        Processes keypoint coordinates and normalizes them to [0,1] range while
-        preserving associated labels.
+        Takes the raw model output containing keypoint detection information and converts
+        it to FiftyOne's Keypoint objects that can be visualized in the UI.
         
         Args:
-            points: Keypoint detection results, either:
-                - List of keypoint dictionaries
-                - Dictionary containing 'data'
-            image_width: Original image width in pixels
-            image_height: Original image height in pixels
+            points: List of dictionaries containing keypoint information with 'point_2d' 
+                   and optionally 'label' keys
             
         Returns:
-            fo.Keypoints: FiftyOne Keypoints object containing all converted keypoints
+            fo.Keypoints: A FiftyOne Keypoints object containing all valid keypoint detections
         """
         keypoints = []
+        # Extract the 'keypoints' list from the model output if nested in a container
+        points = self._extract_list_from_data(points, "keypoints")
         
-        # Handle nested dictionary structures
-        if isinstance(points, dict):
-            points = points.get("keypoints", points)
-            if isinstance(points, dict):
-                points = next((v for v in points.values() if isinstance(v, list)), points)
-        
-        # Process each keypoint
         for point in points:
             try:
-                # Extract coordinates
-                x_norm, y_norm = point["point_2d"]
-                # Handle tensor inputs if present
-                x_norm = float(x_norm.cpu() if torch.is_tensor(x_norm) else x_norm)
-                y_norm = float(y_norm.cpu() if torch.is_tensor(y_norm) else y_norm)
+                # Convert from model's coordinate system to FiftyOne's expected format
+                fiftyone_point = self._convert_point_to_fiftyone(point["point_2d"])
+                if not fiftyone_point:
+                    # Log and skip if conversion failed (invalid coordinates)
+                    logger.debug(f"Invalid point coordinates: {point['point_2d']}")
+                    continue
                 
-                # Convert from 0-1000 range to pixel coordinates
-                x_pixel = (x_norm / 1000.0) * image_width
-                y_pixel = (y_norm / 1000.0) * image_height
-                
-                # Convert to FiftyOne's relative [0,1] format
-                normalized_point = [
-                    x_pixel / image_width,
-                    y_pixel / image_height
-                ]
-                
-                # Create FiftyOne Keypoint object
+                # Create a FiftyOne Keypoint object with the converted coordinates
+                # Use provided label if available, otherwise default to "point"
                 keypoint = fo.Keypoint(
                     label=str(point.get("label", "point")),
-                    points=[normalized_point]
+                    points=[fiftyone_point]  # FiftyOne expects points as a list
                 )
                 keypoints.append(keypoint)
+                
             except Exception as e:
+                # Catch and log any errors during processing of individual keypoints
                 logger.debug(f"Error processing point {point}: {e}")
                 continue
                 
+        # Return a FiftyOne Keypoints object containing all valid keypoint detections
+        return fo.Keypoints(keypoints=keypoints)
+
+    def _to_agentic_keypoints(self, actions: Dict) -> fo.Keypoints:
+        """Convert agentic actions to FiftyOne Keypoints.
+        
+        Processes the model's agentic action outputs and converts them into FiftyOne Keypoint
+        objects that can be visualized in the UI. Handles different action types including
+        clicks, drags, typing, scrolling, and other UI interactions.
+        
+        Args:
+            actions: Dictionary containing agentic actions, typically with a "keypoints" key
+                    holding a list of action dictionaries
+            
+        Returns:
+            fo.Keypoints: A FiftyOne Keypoints object containing all valid action keypoints
+                         with appropriate metadata for visualization and interaction
+        """
+        keypoints = []
+        # Extract the list of keypoint actions from potentially nested structure
+        actions = self._extract_list_from_data(actions, "keypoints")
+        
+        for idx, kp in enumerate(actions):
+            try:
+                # Get the point coordinates for this action
+                point_2d = kp.get("point_2d")
+                if not point_2d:
+                    # Skip actions without valid coordinates
+                    continue
+                    
+                action_type = kp.get("action", "")
+                
+                if action_type == "drag" and isinstance(point_2d, list):
+                    # Special handling for drag actions which have start and end points
+                    # Convert both points from model coordinates to FiftyOne format
+                    start_point = self._convert_point_to_fiftyone(point_2d[0])
+                    end_point = self._convert_point_to_fiftyone(point_2d[1])
+                    if not start_point or not end_point:
+                        # Skip if either point conversion failed
+                        logger.debug(f"Invalid drag coordinates: {point_2d}")
+                        continue
+                        
+                    # Store drag-specific metadata including the end point
+                    metadata = {
+                        "sequence_idx": idx,  # Track action sequence order
+                        "action": action_type,
+                        "thought": kp.get("thought", ""),  # Agent's reasoning
+                        "end_point": end_point  # Store end point in metadata
+                    }
+                    point = start_point  # Use start point as the main keypoint location
+                else:
+                    # Handle all other single-point actions (click, type, etc.)
+                    # Handle both list and tuple coordinate formats
+                    coords = point_2d[0] if isinstance(point_2d, list) else point_2d
+                    point = self._convert_point_to_fiftyone(coords)
+                    if not point:
+                        # Skip if point conversion failed
+                        logger.debug(f"Invalid point coordinates: {coords}")
+                        continue
+                        
+                    # Build base metadata common to all action types
+                    metadata = {
+                        "sequence_idx": idx,  # Track action sequence order
+                        "action": action_type,
+                        "thought": kp.get("thought", "")  # Agent's reasoning
+                    }
+                    
+                    # Add action-specific parameters to metadata
+                    if action_type == "type":
+                        # For typing actions, include the text content
+                        metadata["content"] = kp.get("content", "")
+                    elif action_type == "finished":
+                        # For task completion, include any final message
+                        metadata["content"] = kp.get("content", "")
+                    elif action_type == "scroll":
+                        # For scrolling, include direction (up/down/left/right)
+                        metadata["direction"] = kp.get("direction", "down")
+                    elif action_type == "hotkey":
+                        # For keyboard shortcuts, include the key combination
+                        metadata["key"] = kp.get("key", "")
+                    elif action_type == "open_app":
+                        # For app launching, include the app name
+                        metadata["app_name"] = kp.get("app_name", "")
+                
+                # Create the FiftyOne Keypoint object with all metadata
+                keypoint = fo.Keypoint(
+                    label=action_type,  # Use action type as the label
+                    points=[point],  # FiftyOne expects points as a list
+                    metadata=metadata  # Include all action metadata
+                )
+                keypoints.append(keypoint)
+                    
+            except Exception as e:
+                # Catch and log any errors during processing of individual actions
+                logger.debug(f"Error processing keypoint {kp}: {e}")
+                continue
+                    
+        # Return a FiftyOne Keypoints object containing all valid action keypoints
         return fo.Keypoints(keypoints=keypoints)
 
     def _to_classifications(self, classes: List[Dict]) -> fo.Classifications:
-        """Convert classification results to FiftyOne Classifications.
-        
-        Processes classification labels into FiftyOne's format.
-        
-        Args:
-            classes: Classification results, either:
-                - List of classification dictionaries
-                - Dictionary containing 'data'
-                
-        Returns:
-            fo.Classifications: FiftyOne Classifications object containing all results
-        """
+        """Convert classification results to FiftyOne Classifications."""
         classifications = []
+        classes = self._extract_list_from_data(classes, "classifications")
         
-        # Handle nested dictionary structures
-        if isinstance(classes, dict):
-            classes = classes.get("data", classes)
-            if isinstance(classes, dict):
-                classes = next((v for v in classes.values() if isinstance(v, list)), classes)
-        
-        # Process each classification
         for cls in classes:
             try:
-                # Create FiftyOne Classification object
+                label = cls.get("label")
+                thought = cls.get("thought", "")
+
                 classification = fo.Classification(
-                    label=str(cls["label"])
+                    label=label,
+                    thought=thought
                 )
                 classifications.append(classification)
+                
             except Exception as e:
                 logger.debug(f"Error processing classification {cls}: {e}")
                 continue
@@ -662,27 +715,7 @@ class OSAtlasModel(SamplesMixin, Model):
         return fo.Classifications(classifications=classifications)
 
     def _predict(self, image: Image.Image, sample=None) -> Union[fo.Detections, fo.Keypoints, fo.Classifications, str]:
-        """Process a single image through the model and return predictions.
-        
-        This internal method handles the core prediction logic including:
-        - Constructing the chat messages with system prompt and user query
-        - Processing the image and text through the model
-        - Parsing the output based on the operation type (detection/points/classification/VQA)
-        
-        Args:
-            image: PIL Image to process
-            sample: Optional FiftyOne sample containing the image filepath
-            
-        Returns:
-            One of:
-            - fo.Detections: For object detection results
-            - fo.Keypoints: For keypoint detection results  
-            - fo.Classifications: For classification results
-            - str: For VQA text responses
-            
-        Raises:
-            ValueError: If no prompt has been set
-        """
+        """Process a single image through the model and return predictions."""
         # Use local prompt variable instead of modifying self.prompt
         prompt = self.prompt  # Start with instance default
         
@@ -693,8 +726,6 @@ class OSAtlasModel(SamplesMixin, Model):
         
         if not prompt:
             raise ValueError("No prompt provided.")
-        
-        input_width, input_height = image.size
         
         messages = [
             {
@@ -720,11 +751,12 @@ class OSAtlasModel(SamplesMixin, Model):
                 ]
             }
         ]
+        
         text = self.processor.apply_chat_template(
             messages, 
             tokenize=False, 
             add_generation_prompt=True
-            )
+        )
         
         image_inputs, video_inputs = process_vision_info(messages)
 
@@ -733,51 +765,46 @@ class OSAtlasModel(SamplesMixin, Model):
             images=image_inputs,
             videos=video_inputs,
             padding=True, 
-            return_tensors="pt").to(self.device)
+            return_tensors="pt"
+        ).to(self.device)
         
         with torch.no_grad():
             output_ids = self.model.generate(**inputs, max_new_tokens=8192)
-        generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, output_ids)]
-        output_text = self.processor.batch_decode(generated_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True)[0]
-
+        
+        generated_ids = [
+            output_ids[len(input_ids):] 
+            for input_ids, output_ids in zip(inputs.input_ids, output_ids)
+        ]
+        
+        output_text = self.processor.batch_decode(
+            generated_ids, 
+            skip_special_tokens=False, 
+            clean_up_tokenization_spaces=True
+        )[0]
 
         # For VQA, return the raw text output
         if self.operation == "vqa":
             return output_text.strip()
-        elif self.operation == "detect":
-            print(f"====RAW MODEL OUTPUT: {output_text}====")
-            parsed_output = self._parse_json(output_text)
-            return self._to_detections(parsed_output, input_width, input_height)
+        
+        # For all other operations, parse JSON and convert to appropriate format
+        print(f"====RAW MODEL OUTPUT: {output_text}====")
+        parsed_output = self._parse_json(output_text)
+        
+        if self.operation == "detect":
+            return self._to_detections(parsed_output)
         elif self.operation == "ocr":
-            print(f"====RAW MODEL OUTPUT: {output_text}====")
-            parsed_output = self._parse_json(output_text)
-            return self._to_detections(parsed_output, input_width, input_height)
+            return self._to_ocr_detections(parsed_output)
         elif self.operation == "point":
-            print(f"====RAW MODEL OUTPUT: {output_text}====")
-            parsed_output = self._parse_json(output_text)
-            return self._to_keypoints(parsed_output, input_width, input_height)
+            return self._to_keypoints(parsed_output)
         elif self.operation == "classify":
-            print(f"====RAW MODEL OUTPUT: {output_text}====")
-            parsed_output = self._parse_json(output_text)
             return self._to_classifications(parsed_output)
         elif self.operation == "agentic": 
-            print(f"====RAW MODEL OUTPUT: {output_text}====")
-            parsed_output = self._parse_json(output_text)
-            return self._to_agentic_keypoints(parsed_output, input_width, input_height)  # Should use _to_agentic_keypoints
+            return self._to_agentic_keypoints(parsed_output)
+        else:
+            raise ValueError(f"Unknown operation: {self.operation}")
 
     def predict(self, image, sample=None):
-        """Process an image with the model.
-        
-        A convenience wrapper around _predict that handles numpy array inputs
-        by converting them to PIL Images first.
-        
-        Args:
-            image: PIL Image or numpy array to process
-            sample: Optional FiftyOne sample containing the image filepath
-            
-        Returns:
-            Model predictions in the appropriate format for the current operation
-        """
+        """Process an image with the model."""
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
         return self._predict(image, sample)
