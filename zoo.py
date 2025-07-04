@@ -30,11 +30,11 @@ Always return your response as valid JSON wrapped in ```json blocks.
 {
     "detections": [
         {
-            "bbox": (x1,y1,x2,y2),
+            "bbox": [x1,y1,x2,y2],
             "label": "descriptive label for the bounding box"
         },
         {
-            "bbox": (x1,y1,x2,y2),
+            "bbox": [x1,y1,x2,y2],
             "label": "descriptive label for the bounding box"
         }
     ]
@@ -78,7 +78,7 @@ For each key point identify the key point and provide a contextually appropriate
 {
     "keypoints": [
         {
-            "point_2d": (x1,y1),
+            "point_2d": [x1,y1],
             "label": "descriptive label for the point"
         }
     ]
@@ -105,7 +105,7 @@ Always return your response as valid JSON wrapped in ```json blocks.
 {
     "text_detections": [
         {
-            "bbox": (x1,y1,x2,y2),
+            "bbox": [x1,y1,x2,y2],
             "text_type": "decide on the appropriate category for this text",  
             "text": "Exact text content found in this region",
         }
@@ -123,19 +123,19 @@ The user might give you a single word instruction, a query, a list of objects, o
 DEFAULT_AGENTIC_PROMPT = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task. 
 
 # Action Space
-click: point_2d=(x1,y1)
-left_double: point_2d=(x1,y1)
-right_single: point_2d=(x1,y1)
-long_press: point_2d=(x1,y1)
+click: point_2d=[x1,y1]
+left_double: point_2d=[x1,y1]
+right_single: point_2d=[x1,y1]
+long_press: point_2d=[x1,y1]
 drag: Return a list of two points, one for the start and one for the end. point_2d=[(x1,y1), (x1,y1)]
 hotkey: key='ctrl c'
-type: point_2d=(x1,y1), content='xxx'
-finished: point_2d=(x1,y1), content='xxx'
-scroll: point_2d=(x1,y1), direction='down/up/right/left'
-wait: point_2d=(x1,y1)
-open_app: point_2d=(x1,y1), app_name=''
-press_home: set "point_2d" to the center of the screen point_2d=(x1,y1)
-press_back: set "point_2d" to the center of the screen point_2d=(x1,y1)
+type: point_2d=[x1,y1], content='xxx'
+finished: point_2d=[x1,y1], content='xxx'
+scroll: point_2d=[x1,y1], direction='down/up/right/left'
+wait: point_2d=[x1,y1]
+open_app: point_2d=[x1,y1], app_name=''
+press_home: set "point_2d" to the center of the screen point_2d=[x1,y1]
+press_back: set "point_2d" to the center of the screen point_2d=[x1,y1]
 
 # Output Format
 
@@ -149,7 +149,7 @@ Always return your actions as valid JSON wrapped in ```json blocks, following th
         {
             "thought": ..., #recall your thought about the action space, additional parameters needed, and their values 
             "action": ...,
-            "point_2d": (x1,y1),
+            "point_2d": [x1,y1],
             "parameter_name": ... ## Refer to your thought about additional parameters.
         }
     ]
