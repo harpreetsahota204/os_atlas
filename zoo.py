@@ -355,8 +355,9 @@ class OSAtlasModel(SamplesMixin, Model):
         Args:
             bbox: Bounding box coordinates in various possible formats:
                 - List/tuple of 4 numbers [x1, y1, x2, y2]
+                - List/tuple of 2 numbers [x, y] (treated as center point)
                 - String representation like "(x1,y1),(x2,y2)" or "x1 y1 x2 y2"
-                - Other formats that can be converted to 4 coordinates
+                - Other formats that can be converted to coordinates
         
         Returns:
             Tuple of (x1, y1, x2, y2) as floats, or None if parsing fails
@@ -366,10 +367,20 @@ class OSAtlasModel(SamplesMixin, Model):
             if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
                 return tuple(map(float, bbox))
             
-            # Case 2: For strings or other formats, extract all numbers and take the first 4
+            # Case 2: If it's a list/tuple with 2 elements, treat as center point
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 2:
+                x, y = map(float, bbox)
+                # Create a small pixel bbox around the center point
+                return (x, y, x + 0.10*x, y + 0.10*y)
+            
+            # Case 3: For strings or other formats, extract all numbers
             numbers = re.findall(r'-?\d+(?:\.\d+)?', str(bbox))
             if len(numbers) >= 4:
                 return tuple(map(float, numbers[:4]))
+            elif len(numbers) == 2:
+                # Treat as center point
+                x, y = map(float, numbers)
+                return (x, y, x + 1, y + 1)
                 
         except (ValueError, TypeError) as e:
             logger.debug(f"Error processing bbox {bbox}: {e}")
