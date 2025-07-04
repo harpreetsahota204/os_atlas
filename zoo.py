@@ -787,7 +787,7 @@ class OSAtlasModel(SamplesMixin, Model):
         
         output_text = self.processor.batch_decode(
             generated_ids, 
-            skip_special_tokens=False, 
+            skip_special_tokens=True, 
             clean_up_tokenization_spaces=True
         )[0]
 
