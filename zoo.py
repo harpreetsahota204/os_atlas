@@ -30,11 +30,11 @@ Always return your response as valid JSON wrapped in ```json blocks.
 {
     "detections": [
         {
-            "bbox": (x1,y1),(x2,y2),
+            "bbox": (x1,y1,x2,y2),
             "label": "descriptive label for the bounding box"
         },
         {
-            "bbox": (x1,y1),(x2,y2),
+            "bbox": (x1,y1,x2,y2),
             "label": "descriptive label for the bounding box"
         }
     ]
@@ -78,7 +78,7 @@ For each key point identify the key point and provide a contextually appropriate
 {
     "keypoints": [
         {
-            "point_2d": [x, y],
+            "point_2d": (x1,y1),
             "label": "descriptive label for the point"
         }
     ]
@@ -105,7 +105,7 @@ Always return your response as valid JSON wrapped in ```json blocks.
 {
     "text_detections": [
         {
-            "bbox": (x1,y1),(x2,y2),
+            "bbox": (x1,y1,x2,y2),
             "text_type": "decide on the appropriate category for this text",  
             "text": "Exact text content found in this region",
         }
@@ -271,64 +271,6 @@ class OSAtlasModel(SamplesMixin, Model):
         self._custom_system_prompt = value
 
     def _parse_json(self, s: str) -> Dict:
-        """
-        Parse JSON from potentially truncated model output, auto-detecting structure.
-        
-        Tries standard parsing first. If truncated, finds the first array key 
-        in the JSON and extracts complete objects from that array.
-        
-        Args:
-            s: Raw string containing JSON (may be in markdown blocks)
-            
-        Returns:
-            Complete JSON if valid, otherwise dict with the detected array key
-            containing any complete objects found before truncation.
-        """
-        # Extract JSON content from markdown code blocks if present
-        if "```json" in s:
-            s = s.split("```json")[1].split("```")[0].strip()  # Get content between ```json and ``` markers
-        
-        # Try standard JSON parsing first - this handles complete, valid JSON
-        try:
-            return json.loads(s)  # Return immediately if parsing succeeds
-        except:
-            pass  # If parsing fails, continue to recovery methods
-        
-        # Recovery method 1: Find the first array key pattern like "key_name": [
-        array_match = re.search(r'"([^"]+)":\s*\[', s)  # Regex to find array key
-        if not array_match:
-            return {"items": []}  # Return empty fallback structure if no array pattern found
-        
-        array_key = array_match.group(1)  # Extract the actual key name from regex match
-        
-        # Find the exact position where array content begins
-        array_pattern = f'"{array_key}": ['  # Reconstruct the exact pattern to search for
-        array_start = s.find(array_pattern) + len(array_pattern)  # Calculate start position of array content
-        array_content = s[array_start:]  # Extract just the array content portion
-        
-        # Recovery method 2: Extract complete JSON objects from the array by tracking nested braces
-        objects = []  # Will hold successfully parsed objects
-        depth = 0  # Track nesting level of braces
-        start = -1  # Position where current object starts
-        
-        for i, c in enumerate(array_content):
-            if c == '{':
-                if depth == 0:
-                    start = i  # Mark start of a new object
-                depth += 1  # Increase nesting level
-            elif c == '}':
-                depth -= 1  # Decrease nesting level
-                if depth == 0 and start >= 0:
-                    try:
-                        # Extract and parse complete object
-                        objects.append(json.loads(array_content[start:i+1]))  # Parse individual object
-                    except:
-                        pass  # Skip invalid objects
-        
-        # Return recovered objects with original key structure
-        return {array_key: objects}
-
-    def _parse_json(self, s: str) -> Dict:
         """Parse JSON from potentially truncated model output, auto-detecting structure.
         
         Tries standard parsing first. If truncated, finds the first array key 
@@ -349,9 +291,16 @@ class OSAtlasModel(SamplesMixin, Model):
         try:
             return json.loads(s)
         except json.JSONDecodeError:
-            pass
+            # JSON parsing failed - try to fix coordinate formatting issues first
+            try:
+                # Fix the specific issue: (x,y),(x2,y2) -> (x,y), (x2,y2)
+                # Add space after ),( pattern
+                fixed_s = re.sub(r'\),\(', '), (', s)
+                return json.loads(fixed_s)
+            except json.JSONDecodeError:
+                pass
         
-        # If standard parsing fails, fall back to object extraction
+        # If JSON parsing still fails, fall back to object extraction
         # This handles both malformed JSON and truncated output
         array_match = re.search(r'"([^"]+)":\s*\[', s)
         if not array_match:
@@ -378,6 +327,8 @@ class OSAtlasModel(SamplesMixin, Model):
                 if depth == 0 and obj_start is not None:
                     try:
                         obj_json = array_content[obj_start:i+1]
+                        # Apply coordinate fixes to individual objects too
+                        obj_json = re.sub(r'\),\(', '), (', obj_json)
                         objects.append(json.loads(obj_json))
                     except json.JSONDecodeError:
                         # If individual object parsing fails, skip it
