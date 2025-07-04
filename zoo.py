@@ -622,85 +622,76 @@ class OSAtlasModel(SamplesMixin, Model):
                          with appropriate metadata for visualization and interaction
         """
         keypoints = []
-        # Extract the list of keypoint actions from potentially nested structure
         actions = self._extract_list_from_data(actions, "keypoints")
         
         for idx, kp in enumerate(actions):
             try:
-                # Get the point coordinates for this action
                 point_2d = kp.get("point_2d")
                 if not point_2d:
-                    # Skip actions without valid coordinates
                     continue
                     
                 action_type = kp.get("action", "")
                 
-                if action_type == "drag" and isinstance(point_2d, list):
-                    # Special handling for drag actions which have start and end points
-                    # Convert both points from model coordinates to FiftyOne format
+                if action_type == "drag" and isinstance(point_2d, list) and len(point_2d) == 2:
+                    # Drag action: point_2d is [(x1,y1), (x2,y2)]
                     start_point = self._convert_point_to_fiftyone(point_2d[0])
                     end_point = self._convert_point_to_fiftyone(point_2d[1])
                     if not start_point or not end_point:
-                        # Skip if either point conversion failed
                         logger.debug(f"Invalid drag coordinates: {point_2d}")
                         continue
                         
-                    # Store drag-specific metadata including the end point
                     metadata = {
-                        "sequence_idx": idx,  # Track action sequence order
+                        "sequence_idx": idx,
                         "action": action_type,
-                        "thought": kp.get("thought", ""),  # Agent's reasoning
-                        "end_point": end_point  # Store end point in metadata
+                        "thought": kp.get("thought", ""),
+                        "end_point": end_point
                     }
-                    point = start_point  # Use start point as the main keypoint location
+                    point = start_point
                 else:
-                    # Handle all other single-point actions (click, type, etc.)
-                    # Handle both list and tuple coordinate formats
-                    coords = point_2d[0] if isinstance(point_2d, list) else point_2d
-                    point = self._convert_point_to_fiftyone(coords)
+                    # Single point action - use point_2d directly
+                    point = self._convert_point_to_fiftyone(point_2d)
                     if not point:
-                        # Skip if point conversion failed
-                        logger.debug(f"Invalid point coordinates: {coords}")
+                        logger.debug(f"Invalid point coordinates: {point_2d}")
                         continue
                         
-                    # Build base metadata common to all action types
+                    # Build metadata with action-specific parameters
                     metadata = {
-                        "sequence_idx": idx,  # Track action sequence order
+                        "sequence_idx": idx,
                         "action": action_type,
-                        "thought": kp.get("thought", "")  # Agent's reasoning
+                        "thought": kp.get("thought", "")
                     }
                     
-                    # Add action-specific parameters to metadata
+                    # Add action-specific parameters based on your action space
                     if action_type == "type":
-                        # For typing actions, include the text content
                         metadata["content"] = kp.get("content", "")
                     elif action_type == "finished":
-                        # For task completion, include any final message
                         metadata["content"] = kp.get("content", "")
                     elif action_type == "scroll":
-                        # For scrolling, include direction (up/down/left/right)
                         metadata["direction"] = kp.get("direction", "down")
                     elif action_type == "hotkey":
-                        # For keyboard shortcuts, include the key combination
                         metadata["key"] = kp.get("key", "")
                     elif action_type == "open_app":
-                        # For app launching, include the app name
                         metadata["app_name"] = kp.get("app_name", "")
+                    elif action_type in ["click", "left_double", "right_single", "long_press", "wait", "press_home", "press_back"]:
+                        # These actions only need point_2d, no additional parameters
+                        pass
+                    
+                    # Add any extra parameters that might be provided (like parameter_name)
+                    for key, value in kp.items():
+                        if key not in ["thought", "action", "point_2d", "content", "direction", "key", "app_name"]:
+                            metadata[key] = value
                 
-                # Create the FiftyOne Keypoint object with all metadata
                 keypoint = fo.Keypoint(
-                    label=action_type,  # Use action type as the label
-                    points=[point],  # FiftyOne expects points as a list
-                    metadata=metadata  # Include all action metadata
+                    label=action_type,
+                    points=[point],
+                    metadata=metadata
                 )
                 keypoints.append(keypoint)
                     
             except Exception as e:
-                # Catch and log any errors during processing of individual actions
                 logger.debug(f"Error processing keypoint {kp}: {e}")
                 continue
                     
-        # Return a FiftyOne Keypoints object containing all valid action keypoints
         return fo.Keypoints(keypoints=keypoints)
 
     def _to_classifications(self, classes: List[Dict]) -> fo.Classifications:
