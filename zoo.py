@@ -159,8 +159,8 @@ Always return your actions as valid JSON wrapped in ```json blocks, following th
 Note: Include only parameters relevant to your chosen action. Keep thoughts in English and summarize your plan with the target element in one sentence.
 """
 
-MIN_PIXELS = 256*28*28
-MAX_PIXELS = 1024*28*28
+MIN_PIXELS = 1024
+MAX_PIXELS = 1024
 
 
 OPERATIONS = {
