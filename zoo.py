@@ -331,26 +331,23 @@ class OSAtlasModel(SamplesMixin, Model):
     def _extract_list_from_data(self, data: Union[Dict, List, Any], key: str) -> List[Any]:
         """Extract list from various nested data structures.
         
-        This helper method handles different JSON structures that might be returned by the model,
-        ensuring we always get a list of items regardless of the nesting structure.
-        
-        Args:
-            data: The parsed data structure, which could be a dict, list, or other type
-            key: The expected key name for the list in the dictionary (e.g., "detections")
-            
-        Returns:
-            A list of items, either directly extracted or wrapped in a list if a single item
+        Handles both direct array formats and wrapped formats:
+        - Direct: [ { "item": "data" } ]
+        - Wrapped: { "key": [ { "item": "data" } ] }
         """
+        # If it's already a list, return it directly (handles direct array format)
+        if isinstance(data, list):
+            return data
+            
+        # If it's a dict, try to extract the list from various nested structures
         if isinstance(data, dict):
-            # First try to get the list using the provided key
             data = data.get(key, data)
             if isinstance(data, dict):
-                # If still a dict, look for the first list value in any of its keys
-                # This handles cases where the model returns {"data": {"detections": [...]}}
                 data = next((v for v in data.values() if isinstance(v, list)), data)
         
-        # Ensure we always return a list, even if we found a single item
+        # Ensure we always return a list
         return data if isinstance(data, list) else [data]
+
 
     def _parse_bbox_coords(self, bbox: Union[List, Tuple, str, Any]) -> Optional[Tuple[float, float, float, float]]:
         """Parse bounding box coordinates from various formats.
