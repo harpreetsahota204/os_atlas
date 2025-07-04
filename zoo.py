@@ -528,40 +528,49 @@ class OSAtlasModel(SamplesMixin, Model):
             fo.Detections: A FiftyOne Detections object containing all valid OCR text detections
         """
         detections = []
-        # Extract the 'text_detections' list from the model output if nested in a container
+        seen_detections = set()  # Track unique detections
         boxes = self._extract_list_from_data(boxes, "text_detections")
         
         for box in boxes:
             try:
-                # Get bbox and text content - try both possible key names for flexibility
+                # Get bbox and text content
                 bbox = box.get('bbox', box.get('bbox_2d'))
                 text = box.get('text')
-                # Skip entries without both bounding box and text content
                 if not bbox or not text:
                     continue
                     
-                # Convert from model's coordinate system to FiftyOne's expected format
                 fiftyone_bbox = self._convert_bbox_to_fiftyone(bbox)
                 if not fiftyone_bbox:
-                    # Log and skip if conversion failed (invalid coordinates)
                     logger.debug(f"Invalid bbox format: {bbox}")
                     continue
                 
-                # Create a FiftyOne Detection object with the converted coordinates
-                # Use 'text_type' as label if provided, otherwise default to "text"
+                text_type = str(box.get('text_type', 'text'))
+                text_content = str(text)
+                
+                # Create a unique identifier for this detection
+                # Use text content + rounded bbox coordinates to catch duplicates
+                bbox_rounded = tuple(round(coord, 3) for coord in fiftyone_bbox)
+                detection_key = (text_content, text_type, bbox_rounded)
+                
+                # Skip if we've already seen this exact detection
+                if detection_key in seen_detections:
+                    logger.debug(f"Skipping duplicate OCR detection: {text_content}")
+                    continue
+                    
+                seen_detections.add(detection_key)
+                
                 detection = fo.Detection(
-                    label=str(box.get('text_type', 'text')),
+                    label=text_type,
                     bounding_box=fiftyone_bbox,
-                    text=str(text)  # Store the actual OCR text content
+                    text=text_content
                 )
                 detections.append(detection)
                     
             except Exception as e:
-                # Catch and log any errors during processing of individual OCR boxes
                 logger.debug(f"Error processing OCR box {box}: {e}")
                 continue
                     
-        # Return a FiftyOne Detections object containing all valid OCR text detections
+        logger.info(f"OCR: Processed {len(boxes)} raw detections, kept {len(detections)} unique detections")
         return fo.Detections(detections=detections)
 
     def _to_keypoints(self, points: List[Dict]) -> fo.Keypoints:
