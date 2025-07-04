@@ -328,6 +328,65 @@ class OSAtlasModel(SamplesMixin, Model):
         # Return recovered objects with original key structure
         return {array_key: objects}
 
+    def _parse_json(self, s: str) -> Dict:
+        """Parse JSON from potentially truncated model output, auto-detecting structure.
+        
+        Tries standard parsing first. If truncated, finds the first array key 
+        and extracts complete objects from that array.
+        
+        Args:
+            s: Raw string containing JSON (may be in markdown blocks)
+            
+        Returns:
+            Complete JSON if valid, otherwise dict with the detected array key
+            containing any complete objects found before truncation.
+        """
+        # Extract JSON from markdown blocks
+        if "```json" in s:
+            s = s.split("```json")[1].split("```")[0].strip()
+        
+        # Try standard parsing first
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            pass
+        
+        # If standard parsing fails, fall back to object extraction
+        # This handles both malformed JSON and truncated output
+        array_match = re.search(r'"([^"]+)":\s*\[', s)
+        if not array_match:
+            return {"items": []}
+        
+        array_key = array_match.group(1)
+        
+        # Extract array content
+        array_start = s.find(f'"{array_key}": [') + len(f'"{array_key}": [')
+        array_content = s[array_start:]
+        
+        # Extract complete objects by tracking brace depth
+        objects = []
+        depth = 0
+        obj_start = None
+        
+        for i, char in enumerate(array_content):
+            if char == '{':
+                if depth == 0:
+                    obj_start = i
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0 and obj_start is not None:
+                    try:
+                        obj_json = array_content[obj_start:i+1]
+                        objects.append(json.loads(obj_json))
+                    except json.JSONDecodeError:
+                        # If individual object parsing fails, skip it
+                        # The coordinate parsing methods will handle malformed coordinates
+                        pass
+                    obj_start = None
+        
+        return {array_key: objects}
+
     def _extract_list_from_data(self, data: Union[Dict, List, Any], key: str) -> List[Any]:
         """Extract list from various nested data structures.
         
@@ -347,7 +406,6 @@ class OSAtlasModel(SamplesMixin, Model):
         
         # Ensure we always return a list
         return data if isinstance(data, list) else [data]
-
 
     def _parse_bbox_coords(self, bbox: Union[List, Tuple, str, Any]) -> Optional[Tuple[float, float, float, float]]:
         """Parse bounding box coordinates from various formats.
@@ -402,6 +460,7 @@ class OSAtlasModel(SamplesMixin, Model):
             logger.debug(f"Error processing point {point}: {e}")
             
         return None
+
 
     def _convert_bbox_to_fiftyone(self, bbox: Any) -> Optional[List[float]]:
         """Convert bbox coordinates to FiftyOne format.
