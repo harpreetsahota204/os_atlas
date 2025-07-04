@@ -798,7 +798,6 @@ class OSAtlasModel(SamplesMixin, Model):
             return output_text.strip()
         
         # For all other operations, parse JSON and convert to appropriate format
-        print(f"====RAW MODEL OUTPUT: {output_text}====")
         parsed_output = self._parse_json(output_text)
         
         if self.operation == "detect":
