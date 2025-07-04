@@ -291,16 +291,9 @@ class OSAtlasModel(SamplesMixin, Model):
         try:
             return json.loads(s)
         except json.JSONDecodeError:
-            # JSON parsing failed - try to fix coordinate formatting issues first
-            try:
-                # Fix the specific issue: (x,y),(x2,y2) -> (x,y), (x2,y2)
-                # Add space after ),( pattern
-                fixed_s = re.sub(r'\),\(', '), (', s)
-                return json.loads(fixed_s)
-            except json.JSONDecodeError:
-                pass
+            pass
         
-        # If JSON parsing still fails, fall back to object extraction
+        # If standard parsing fails, fall back to object extraction
         # This handles both malformed JSON and truncated output
         array_match = re.search(r'"([^"]+)":\s*\[', s)
         if not array_match:
@@ -327,8 +320,6 @@ class OSAtlasModel(SamplesMixin, Model):
                 if depth == 0 and obj_start is not None:
                     try:
                         obj_json = array_content[obj_start:i+1]
-                        # Apply coordinate fixes to individual objects too
-                        obj_json = re.sub(r'\),\(', '), (', obj_json)
                         objects.append(json.loads(obj_json))
                     except json.JSONDecodeError:
                         # If individual object parsing fails, skip it
