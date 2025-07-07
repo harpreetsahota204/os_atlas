@@ -1,6 +1,6 @@
 {
     "name": "OS-Atlas",
-    "url": "https://github.com/harpreetsahota204/os_atlas/tree/main",
+    "url": "https://github.com/harpreetsahota204/os_atlas",
     "models": [
         {
             "base_name": "OS-Copilot/OS-Atlas-Base-7B",
