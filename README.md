@@ -20,16 +20,7 @@ A robust FiftyOne model integration for OS-Atlas vision-language models, designe
 | `vqa` | Visual question answering | Raw text |
 | `agentic` | GUI agent action planning | `fo.Keypoints` with metadata |
 
-## Available Models
 
-Two model variants are supported through this integration:
-
-| Model | Description | Use Case |
-|-------|-------------|----------|
-| `OS-Copilot/OS-Atlas-Base-7B` | Base 7B parameter model for GUI understanding | General UI tasks, development, experimentation |
-| `OS-Copilot/OS-Atlas-Pro-7B` | Enhanced 7B parameter model with improved performance | Production applications, demanding GUI agent tasks |
-
-Both models support the same operations and API, with the Pro variant offering enhanced accuracy and robustness.
 
 ## Installation
 
@@ -51,14 +42,6 @@ foz.register_zoo_model_source(
 ```python
 model = foz.load_zoo_model(
     "OS-Copilot/OS-Atlas-Base-7B",
-    install_requirements=True
-)
-```
-
-**Pro Model (recommended for production):**
-```python
-model = foz.load_zoo_model(
-    "OS-Copilot/OS-Atlas-Pro-7B",
     install_requirements=True
 )
 ```
